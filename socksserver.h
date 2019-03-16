@@ -1,6 +1,11 @@
 #ifndef SOCKS5SERVER_H
 #define SOCKS5SERVER_H
 #include <stdint.h>
+#include <map>
+#include <variant>
+#include <mutex>
+
+typedef std::variant<uint16_t, uint32_t, std::string> Variant;
 
 struct sockaddr_in;
 
@@ -48,16 +53,23 @@ public:
     int listenning(uint16_t iPort = 1080, const char* iAddr = "0.0.0.0");
 
 private:
-    void serve(int iSControl, const sockaddr_in* iCSIn);
+    void serve(int iSControl, const sockaddr_in &iCSIn);
     inline int connTo(uint16_t iPort, uint32_t iAddr);
 
-    void outComing(int iSControl, uint16_t iPort, uint32_t iAddr, int tvSeconds = 20);
-    void inComing();
+    void Connect(int iSControl, uint16_t iPort, uint32_t iAddr);
+    void Bind(int iSControl, uint16_t iPort, uint32_t iAddr, const std::string& iUsrId, const sockaddr_in &iCSIn);
+
+    void addSession(const std::string& iHstDotPort, const std::map<std::string, Variant>& iV);
+    void removeSession(const std::string& iHstDotPort);
+    std::map<std::string, Variant> getSession(const std::string& iHstDotPort);
 private:
     //the default port number is 1080
     uint16_t lstPort{0x0438};
     //the default address is 0.0.0.0
     uint32_t lstAddr{0x00000000};
+
+    std::map<std::string, std::map<std::string, Variant> > mSessionMap;
+    std::mutex mSsonMapMtx;
 };
 
 #endif // SOCKS5SERVER_H

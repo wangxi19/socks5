@@ -115,16 +115,14 @@ int SocksServer::listenning(uint16_t iPort, const char *iAddr)
             return -1;
         }
 
-        serve(nControl, &cSIn);
+        serve(nControl, cSIn);
     }
 
     return 0;
 }
 
-void SocksServer::serve(int iSControl, const sockaddr_in *iCSIn)
+void SocksServer::serve(int iSControl, const sockaddr_in &iCSIn)
 {
-    UNUSED(iCSIn);
-
     //read command from client
     timeval tv;
     tv.tv_sec = 20;
@@ -187,13 +185,27 @@ void SocksServer::serve(int iSControl, const sockaddr_in *iCSIn)
         goto end;
     }
 
+#ifdef _WIN32
+    //todo, convert inet_ntoa to windows compatibility
+#else
+    addSession(std::string(inet_ntoa(iCSIn.sin_addr)) + ":" + std::to_string(iCSIn.sin_port),
+               std::map<std::string, Variant>{
+                   {std::string("DSTPORT"), Variant(cHeader->portNum)},
+                   {std::string("DSTIP"), Variant(cHeader->ipaddr)},
+                   {std::string("USERID"), Variant(std::string(cHeader->userId))}
+               });
+#endif
+
     //request to connect
     if (0x01 == cHeader->cmdCode) {
-        outComing(iSControl, cHeader->portNum, cHeader->ipaddr);
+        Connect(iSControl, cHeader->portNum, cHeader->ipaddr);
+    } else if (0x02 == cHeader->cmdCode) {
+        Bind(iSControl, cHeader->portNum, cHeader->ipaddr, std::string(cHeader->userId), iCSIn);
     }
 
     end:
     SockClose(iSControl);
+    removeSession(std::string(inet_ntoa(iCSIn.sin_addr)) + ":" + std::to_string(iCSIn.sin_port));
 }
 
 int SocksServer::connTo(uint16_t iPort, uint32_t iAddr)
@@ -233,10 +245,10 @@ int SocksServer::connTo(uint16_t iPort, uint32_t iAddr)
     return trdControl;
 }
 
-void SocksServer::outComing(int iSControl, uint16_t iPort, uint32_t iAddr, int tvSeconds)
+void SocksServer::Connect(int iSControl, uint16_t iPort, uint32_t iAddr)
 {
     timeval tv;
-    tv.tv_sec = tvSeconds;
+    tv.tv_sec = 20;
     tv.tv_usec = 0;
     S4SHeader sHeader;
     sHeader.reserved2 = (uint16_t)random();
@@ -296,4 +308,47 @@ void SocksServer::outComing(int iSControl, uint16_t iPort, uint32_t iAddr, int t
 
     end:
     return;
+}
+
+void SocksServer::Bind(int iSControl, uint16_t iPort, uint32_t iAddr, const std::string &iUsrId, const sockaddr_in &iCSIn)
+{
+    S4SHeader sHeader;
+
+    auto sessionVal = getSession(std::string(inet_ntoa(iCSIn.sin_addr)) + ":" + std::to_string(iCSIn.sin_port));
+
+    if (sessionVal.empty() ||
+            iPort != std::get<uint16_t>(sessionVal["DSTPORT"]) ||
+            iAddr != std::get<uint32_t>(sessionVal["DSTIP"]) ||
+            iUsrId != std::get<std::string>(sessionVal["USERID"]))
+    {
+        sHeader.status = 0x5C;
+        SockWrite(iSControl, &sHeader, sizeof(S4SHeader));
+        goto end;
+    }
+
+    //todo
+    //listenning a new port, then return self address (or 0.0.0.0) and the port to the client
+
+    end:
+    return;
+}
+
+void SocksServer::addSession(const std::string &iHstDotPort, const std::map<std::string, Variant> &iV)
+{
+    std::lock_guard<std::mutex> lk(mSsonMapMtx);
+    mSessionMap[iHstDotPort] = iV;
+}
+
+void SocksServer::removeSession(const std::string &iHstDotPort)
+{
+    std::lock_guard<std::mutex> lk(mSsonMapMtx);
+    mSessionMap.erase(iHstDotPort);
+}
+
+std::map<std::string, Variant> SocksServer::getSession(const std::string &iHstDotPort)
+{
+    std::lock_guard<std::mutex> lk(mSsonMapMtx);
+    if (mSessionMap.end() == mSessionMap.find(iHstDotPort)) return std::map<std::string, Variant>();
+
+    return mSessionMap[iHstDotPort];
 }
