@@ -136,8 +136,6 @@ void SocksServer::serve(int iSControl, const sockaddr_in *iCSIn)
     int fd;
     int rcvsz;
     S4SHeader sHeader;
-    int trdControl;
-    int wrtsz;
 
     while (true) {
         fd = MARKTOOLS::SocketWaitRead(tv, {iSControl});
@@ -191,52 +189,7 @@ void SocksServer::serve(int iSControl, const sockaddr_in *iCSIn)
 
     //request to connect
     if (0x01 == cHeader->cmdCode) {
-        trdControl = connTo(cHeader->portNum, cHeader->ipaddr);
-        if (-1 == trdControl) {
-            sHeader.status = 0x5C;
-            SockWrite(iSControl, &sHeader, sizeof(S4SHeader));
-
-            goto end;
-        }
-
-        sHeader.status = 0x5A;
-        SockWrite(iSControl, &sHeader, sizeof(S4SHeader));
-
-        while (true) {
-            fd = MARKTOOLS::SocketWaitRead(tv, {iSControl, trdControl});
-
-            if (0 == fd) {
-                SockClose(trdControl);
-
-                goto end;
-            }
-
-            if (-1 == fd) {
-                perror("SocketWaitRead");
-                SockClose(trdControl);
-
-                goto end;
-            }
-
-            rcvsz = SockRead(fd, buf, sizeof(buf) - 1);
-            if (rcvsz < 0) {
-                perror("SockRead");
-            }
-
-            if (rcvsz == 0) {
-                SockClose(trdControl);
-
-                goto end;
-            }
-
-            wrtsz = SockWrite(fd == iSControl ? trdControl : iSControl, buf, rcvsz);
-            if (wrtsz != rcvsz) {
-                perror("SockWrite");
-                SockClose(trdControl);
-
-                goto end;
-            }
-        }
+        outComing(iSControl, cHeader->portNum, cHeader->ipaddr);
     }
 
     end:
@@ -278,4 +231,69 @@ int SocksServer::connTo(uint16_t iPort, uint32_t iAddr)
 
     end:
     return trdControl;
+}
+
+void SocksServer::outComing(int iSControl, uint16_t iPort, uint32_t iAddr, int tvSeconds)
+{
+    timeval tv;
+    tv.tv_sec = tvSeconds;
+    tv.tv_usec = 0;
+    S4SHeader sHeader;
+    sHeader.reserved2 = (uint16_t)random();
+    sHeader.reserved3 = (uint32_t)random();
+    int trdControl;
+    int fd;
+    int rcvsz;
+    int wrtsz;
+    char buf[1024]{0, };
+
+    trdControl = connTo(iPort, iAddr);
+    if (-1 == trdControl) {
+        sHeader.status = 0x5C;
+        SockWrite(iSControl, &sHeader, sizeof(S4SHeader));
+
+        goto end;
+    }
+
+    sHeader.status = 0x5A;
+    SockWrite(iSControl, &sHeader, sizeof(S4SHeader));
+
+    while (true) {
+        fd = MARKTOOLS::SocketWaitRead(tv, {iSControl, trdControl});
+
+        if (0 == fd) {
+            SockClose(trdControl);
+
+            goto end;
+        }
+
+        if (-1 == fd) {
+            perror("SocketWaitRead");
+            SockClose(trdControl);
+
+            goto end;
+        }
+
+        rcvsz = SockRead(fd, buf, sizeof(buf) - 1);
+        if (rcvsz < 0) {
+            perror("SockRead");
+        }
+
+        if (rcvsz == 0) {
+            SockClose(trdControl);
+
+            goto end;
+        }
+
+        wrtsz = SockWrite(fd == iSControl ? trdControl : iSControl, buf, rcvsz);
+        if (wrtsz != rcvsz) {
+            perror("SockWrite");
+            SockClose(trdControl);
+
+            goto end;
+        }
+    }
+
+    end:
+    return;
 }

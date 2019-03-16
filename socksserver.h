@@ -50,6 +50,9 @@ public:
 private:
     void serve(int iSControl, const sockaddr_in* iCSIn);
     inline int connTo(uint16_t iPort, uint32_t iAddr);
+
+    void outComing(int iSControl, uint16_t iPort, uint32_t iAddr, int tvSeconds = 20);
+    void inComing();
 private:
     //the default port number is 1080
     uint16_t lstPort{0x0438};

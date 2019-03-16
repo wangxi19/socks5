@@ -345,7 +345,7 @@ namespace MARKTOOLS {
         if (iconv(cd, pin, &src_len, pout, &dst_len) > 0)
 			return -1;
 		iconv_close(cd);
-		*pout = '\0';
+        (*pout)[0] = '\0';
 
 		return 0;
 	}
@@ -363,7 +363,7 @@ namespace MARKTOOLS {
         if (iconv(cd, pin, &src_len, pout, &dst_len) > 0)
 			return -1;
 		iconv_close(cd);
-		*pout = '\0';
+        (*pout)[0] = '\0';
 
 		return 0;
 	}
