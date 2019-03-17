@@ -31,7 +31,7 @@ public:
     struct S4SHeader {
     private:
         //must be null byte
-        uint8_t reserved1{0x00};
+        uint8_t version{0x04};
     public:
         /**
             0x5A: request granted
@@ -43,9 +43,9 @@ public:
         */
         uint8_t status{0x00};
         //2 arbitrary bytes, which should be ignored
-        uint16_t reserved2{0x0000};
+        uint16_t dstPort{0x0000};
         //4 arbitrary bytes, which should be ignored
-        uint32_t reserved3{0x00000000};
+        uint32_t dstIp{0x00000000};
     };
 
 public:
@@ -55,6 +55,7 @@ public:
 private:
     void serve(int iSControl, const sockaddr_in &iCSIn);
     inline int connTo(uint16_t iPort, uint32_t iAddr);
+    inline int bindOn(uint16_t iPort = 0, uint32_t iAddr = 0);
 
     void Connect(int iSControl, uint16_t iPort, uint32_t iAddr);
     void Bind(int iSControl, uint16_t iPort, uint32_t iAddr, const std::string& iUsrId, const sockaddr_in &iCSIn);

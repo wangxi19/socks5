@@ -175,8 +175,8 @@ void SocksServer::serve(int iSControl, const sockaddr_in &iCSIn)
         goto end;
     }
 
-    sHeader.reserved2 = (uint16_t)random();
-    sHeader.reserved3 = (uint32_t)random();
+    sHeader.dstPort = (uint16_t)random();
+    sHeader.dstIp = (uint32_t)random();
 
     if (0x04 != cHeader->version || (0x01 != cHeader->cmdCode && 0x02 != cHeader->cmdCode)) {
         sHeader.status = 0x5B;
@@ -245,14 +245,51 @@ int SocksServer::connTo(uint16_t iPort, uint32_t iAddr)
     return trdControl;
 }
 
+int SocksServer::bindOn(uint16_t iPort, uint32_t iAddr)
+{
+    int trdControl;
+    sockaddr_in trdIn;
+    int on = 1;
+
+    memset(&trdIn, 0, sizeof(sockaddr_in));
+
+    trdIn.sin_family = AF_INET;
+    trdIn.sin_port = iPort;
+    memccpy(&trdIn.sin_addr, &iAddr, 1, sizeof(iAddr));
+
+    trdControl = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (trdControl == -1) {
+        perror("socket");
+        goto end;
+    }
+
+
+    if (setsockopt(trdControl, SOL_SOCKET, SO_REUSEADDR, SETSOCKOPTOPTVALTYPE &on, sizeof(on)) == -1) {
+        perror("setsockopt SO_REUSEADDR");
+        SockClose(trdControl);
+        trdControl = -1;
+        goto end;
+    }
+
+    if (0 != bind(trdControl, (sockaddr*)&trdIn, sizeof(sockaddr))) {
+        perror("bind");
+        SockClose(trdControl);
+        trdControl = -1;
+        goto end;
+    }
+
+    end:
+    return trdControl;
+}
+
 void SocksServer::Connect(int iSControl, uint16_t iPort, uint32_t iAddr)
 {
     timeval tv;
     tv.tv_sec = 20;
     tv.tv_usec = 0;
     S4SHeader sHeader;
-    sHeader.reserved2 = (uint16_t)random();
-    sHeader.reserved3 = (uint32_t)random();
+    sHeader.dstPort = (uint16_t)random();
+    sHeader.dstIp = (uint32_t)random();
     int trdControl;
     int fd;
     int rcvsz;
@@ -313,6 +350,20 @@ void SocksServer::Connect(int iSControl, uint16_t iPort, uint32_t iAddr)
 void SocksServer::Bind(int iSControl, uint16_t iPort, uint32_t iAddr, const std::string &iUsrId, const sockaddr_in &iCSIn)
 {
     S4SHeader sHeader;
+    sockaddr_in sIn;
+    uint sInLen = sizeof(sockaddr);
+
+    memset(&sIn, 0, sizeof(sIn));
+    int trdControl;
+    int _;
+    int fd;
+    timeval tv;
+    tv.tv_sec = 20;
+    tv.tv_usec = 0;
+    char buf[1024]{0, };
+    int rcvsz;
+    int wrtsz;
+
 
     auto sessionVal = getSession(std::string(inet_ntoa(iCSIn.sin_addr)) + ":" + std::to_string(iCSIn.sin_port));
 
@@ -326,8 +377,89 @@ void SocksServer::Bind(int iSControl, uint16_t iPort, uint32_t iAddr, const std:
         goto end;
     }
 
-    //todo
     //listenning a new port, then return self address (or 0.0.0.0) and the port to the client
+    _ = bindOn();
+    if (-1 == _) {
+        sHeader.status = 0x5C;
+        SockWrite(iSControl, &sHeader, sizeof(S4SHeader));
+        goto end;
+    }
+
+    if (0 != getsockname(_, (sockaddr*)&sIn, &sInLen)) {
+        SockClose(_);
+        perror("getsockname");
+        sHeader.status = 0x5C;
+        SockWrite(iSControl, &sHeader, sizeof(S4SHeader));
+        goto end;
+    }
+
+    if (0 != listen(_, 1000)) {
+        SockClose(_);
+        perror("listen");
+        sHeader.status = 0x5C;
+        SockWrite(iSControl, &sHeader, sizeof(S4SHeader));
+        goto end;
+    }
+
+    sHeader.status = 0x5A;
+    sHeader.dstPort = sIn.sin_port;
+    SockWrite(iSControl, &sHeader, sizeof(S4SHeader));
+
+    while (true) {
+        trdControl = accept(_, (sockaddr*)&sIn, &sInLen);
+        if (-1 == trdControl) {
+            perror("accept");
+            continue;
+        }
+
+        if (0 != memcmp(&sIn.sin_addr, &iAddr, sizeof(uint32_t))) {
+            std::cout << "Incoming address is mismatched, disconnect it" << std::endl;
+            sHeader.status = 0x5C;
+            SockWrite(iSControl, &sHeader, sizeof(S4SHeader));
+            SockClose(trdControl);
+            continue;
+        }
+
+        sHeader.status = 0x5A;
+        sHeader.dstPort = sIn.sin_port;
+        SockWrite(iSControl, &sHeader, sizeof(S4SHeader));
+
+        while (true) {
+            fd = MARKTOOLS::SocketWaitRead(tv, {iSControl, trdControl});
+            if (fd == -1) {
+                perror("SocketWaitRead");
+                break;
+            }
+
+            if (fd == 0) {
+                //todo, Continue to listen if the trdControl server close the incoming connection
+                //because some applications maybe establish short connections multiple times in succession
+                //Example: http1.0
+                perror("TSocketWaitRead Timeout");
+                break;
+            }
+
+            rcvsz = SockRead(fd, buf, sizeof(buf));
+            if (rcvsz < 0) {
+                perror("SockRead");
+                break;
+            }
+
+            if (rcvsz == 0) {
+                break;
+            }
+
+            wrtsz = SockWrite(fd == iSControl ? trdControl : iSControl, buf, rcvsz);
+            if (wrtsz != rcvsz) {
+                perror("SockWrite");
+                break;
+            }
+        }
+
+        SockClose(trdControl);
+        SockClose(_);
+        goto end;
+    }
 
     end:
     return;
