@@ -422,8 +422,8 @@ void SocksServer::Bind(int iSControl, uint16_t iPort, uint32_t iAddr, const std:
 
         sHeader.status = 0x5A;
         sHeader.dstPort = sIn.sin_port;
+        memccpy(&sHeader.dstIp, &sIn.sin_addr, 1, sizeof(sIn.sin_addr));
         SockWrite(iSControl, &sHeader, sizeof(S4SHeader));
-
 
         while (true) {
             fd = MARKTOOLS::SocketWaitRead(tv, {iSControl, trdControl});
