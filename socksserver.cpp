@@ -363,7 +363,7 @@ void SocksServer::Bind(int iSControl, uint16_t iPort, uint32_t iAddr, const std:
     char buf[1024]{0, };
     int rcvsz;
     int wrtsz;
-
+    bool flag{false};
 
     auto sessionVal = getSession(std::string(inet_ntoa(iCSIn.sin_addr)) + ":" + std::to_string(iCSIn.sin_port));
 
@@ -424,6 +424,7 @@ void SocksServer::Bind(int iSControl, uint16_t iPort, uint32_t iAddr, const std:
         sHeader.dstPort = sIn.sin_port;
         SockWrite(iSControl, &sHeader, sizeof(S4SHeader));
 
+
         while (true) {
             fd = MARKTOOLS::SocketWaitRead(tv, {iSControl, trdControl});
             if (fd == -1) {
@@ -432,9 +433,6 @@ void SocksServer::Bind(int iSControl, uint16_t iPort, uint32_t iAddr, const std:
             }
 
             if (fd == 0) {
-                //todo, Continue to listen if the trdControl server close the incoming connection
-                //because some applications maybe establish short connections multiple times in succession
-                //Example: http1.0
                 perror("TSocketWaitRead Timeout");
                 break;
             }
@@ -446,6 +444,10 @@ void SocksServer::Bind(int iSControl, uint16_t iPort, uint32_t iAddr, const std:
             }
 
             if (rcvsz == 0) {
+                // Continue to listen if the trdControl server close the incoming connection
+                //because some applications maybe establish short connections multiple times in succession
+                //Example: http1.0
+                flag = fd == iSControl;
                 break;
             }
 
@@ -457,8 +459,10 @@ void SocksServer::Bind(int iSControl, uint16_t iPort, uint32_t iAddr, const std:
         }
 
         SockClose(trdControl);
-        SockClose(_);
-        goto end;
+        if (flag) {
+            SockClose(_);
+            goto end;
+        }
     }
 
     end:
