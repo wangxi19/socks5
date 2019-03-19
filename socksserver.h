@@ -48,12 +48,23 @@ public:
         uint32_t dstIp{0x00000000};
     };
 
+
+    //socks5
+    //supported authentication methods
+    char authMethodsLst[1] {
+        0x00
+        //todo, add other auth methods
+    };
+
 public:
     explicit SocksServer();
     int listenning(uint16_t iPort = 1080, const char* iAddr = "0.0.0.0");
 
 private:
-    void serve(int iSControl, const sockaddr_in &iCSIn);
+    void distributor(int iSControl, const sockaddr_in &iCSIn);
+    void serveV4(int iSControl, const sockaddr_in &iCSIn);
+    void serveV5(int iSControl, const sockaddr_in &iCSIn);
+    void greetingV5(int iSControl, const sockaddr_in &iCSIn);
     inline int connTo(uint16_t iPort, uint32_t iAddr);
     inline int bindOn(uint16_t iPort = 0, uint32_t iAddr = 0);
 
@@ -71,6 +82,7 @@ private:
 
     std::map<std::string, std::map<std::string, Variant> > mSessionMap;
     std::mutex mSsonMapMtx;
+    timeval tv;
 };
 
 #endif // SOCKS5SERVER_H

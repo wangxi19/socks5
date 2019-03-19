@@ -56,7 +56,8 @@ typedef int socklen_t;
 
 SocksServer::SocksServer()
 {
-
+    tv.tv_sec = 20;
+    tv.tv_usec = 0;
 }
 
 int SocksServer::listenning(uint16_t iPort, const char *iAddr)
@@ -115,21 +116,61 @@ int SocksServer::listenning(uint16_t iPort, const char *iAddr)
             return -1;
         }
 
-        serve(nControl, cSIn);
+        distributor(nControl, cSIn);
     }
 
     return 0;
 }
 
-void SocksServer::serve(int iSControl, const sockaddr_in &iCSIn)
+void SocksServer::distributor(int iSControl, const sockaddr_in &iCSIn)
+{
+    //inspector buffer
+    char buf[1]{0};
+    int fd;
+    int rcvsz;
+
+    fd = MARKTOOLS::SocketWaitRead(tv, {iSControl});
+
+    if (fd == 0) {
+        goto end;
+    }
+
+    if (fd < 0) {
+        perror("SocketWaitRead");
+        goto end;
+    }
+
+    rcvsz = SockRead(iSControl, buf, sizeof(buf));
+    if (rcvsz == 0) {
+        goto end;
+    }
+
+    if (rcvsz == -1) {
+        std::cerr << "SockRead" << std::endl;
+        goto end;
+    }
+
+    if (0x04 == buf[0]) {
+        serveV4(iSControl, iCSIn);
+    } else if (0x05 == buf[0]) {
+        greetingV5(iSControl, iCSIn);
+    }
+
+    if (false) {
+end:
+        SockClose(iSControl);
+    }
+
+    return;
+}
+
+void SocksServer::serveV4(int iSControl, const sockaddr_in &iCSIn)
 {
     //read command from client
-    timeval tv;
-    tv.tv_sec = 20;
-    tv.tv_usec = 0;
     char buf[1024] {0, };
+    buf[0] = 0x04;
     S4CHeader* cHeader = (S4CHeader*)buf;
-    size_t offset{0};
+    size_t offset{1};
     //
     int fd;
     int rcvsz;
@@ -203,9 +244,97 @@ void SocksServer::serve(int iSControl, const sockaddr_in &iCSIn)
         Bind(iSControl, cHeader->portNum, cHeader->ipaddr, std::string(cHeader->userId), iCSIn);
     }
 
-    end:
+end:
     SockClose(iSControl);
     removeSession(std::string(inet_ntoa(iCSIn.sin_addr)) + ":" + std::to_string(iCSIn.sin_port));
+}
+
+void SocksServer::serveV5(int iSControl, const sockaddr_in &iCSIn)
+{
+    char buf[1024]{0, };
+    buf[0] = 0x05;
+    size_t offset{1};
+
+    //todo, serve socks5
+end:
+    SockClose(iSControl);
+}
+
+void SocksServer::greetingV5(int iSControl, const sockaddr_in &iCSIn)
+{
+    char buf[1024]{0, };
+    buf[0] = 0x05;
+    size_t offset{1};
+    int fd;
+    int rcvsz;
+    size_t idx;
+    size_t idy;
+    int authed = 0;
+
+    while (true) {
+        fd = MARKTOOLS::SocketWaitRead(tv, {iSControl});
+        if (fd == 0) {
+            goto end;
+        }
+
+        if (fd < 0) {
+            perror("SocketWaitRead");
+            goto end;
+        }
+
+        rcvsz = SockRead(iSControl, buf + offset, sizeof(buf) - offset);
+        if (rcvsz == 0) {
+            goto end;
+        }
+
+        if (rcvsz == -1) {
+            std::cerr << "SockRead" << std::endl;
+            goto end;
+        }
+
+        offset += rcvsz;
+        if (offset > (size_t)buf[1] + 2) {
+            std::cerr << "Error format of greeting message" << std::endl;
+            goto end;
+        }
+
+        if (offset == (size_t)buf[1] + 2) break;
+
+        continue;
+    }
+
+    for (idx = 2; idx < offset; idx++) {
+        for (idy = 0; idy < sizeof(authMethodsLst); idy++) {
+            if (buf[idx] != authMethodsLst[idy]) continue;
+
+            authed = -1;
+            if (buf[idx] == 0x00) {
+                //auth the method of 0x00
+                authed = 1;
+                SockWrite(iSControl, "\x05\x00", 2);
+                break;
+            } else if (0x01 == buf[idx]) {
+                //todo, auth the method of 0x01
+
+                break;
+            }
+        }
+
+        if (0 != authed) break;
+    }
+
+    if (-1 == authed) {
+        goto end;
+    }
+
+    serveV5(iSControl, iCSIn);
+
+    if (false) {
+end:
+        SockClose(iSControl);
+    }
+
+    return;
 }
 
 int SocksServer::connTo(uint16_t iPort, uint32_t iAddr)
@@ -241,7 +370,7 @@ int SocksServer::connTo(uint16_t iPort, uint32_t iAddr)
         goto end;
     }
 
-    end:
+end:
     return trdControl;
 }
 
@@ -278,15 +407,12 @@ int SocksServer::bindOn(uint16_t iPort, uint32_t iAddr)
         goto end;
     }
 
-    end:
+end:
     return trdControl;
 }
 
 void SocksServer::Connect(int iSControl, uint16_t iPort, uint32_t iAddr)
 {
-    timeval tv;
-    tv.tv_sec = 20;
-    tv.tv_usec = 0;
     S4SHeader sHeader;
     sHeader.dstPort = (uint16_t)random();
     sHeader.dstIp = (uint32_t)random();
@@ -343,7 +469,7 @@ void SocksServer::Connect(int iSControl, uint16_t iPort, uint32_t iAddr)
         }
     }
 
-    end:
+end:
     return;
 }
 
@@ -357,9 +483,6 @@ void SocksServer::Bind(int iSControl, uint16_t iPort, uint32_t iAddr, const std:
     int trdControl;
     int _;
     int fd;
-    timeval tv;
-    tv.tv_sec = 20;
-    tv.tv_usec = 0;
     char buf[1024]{0, };
     int rcvsz;
     int wrtsz;
@@ -465,7 +588,7 @@ void SocksServer::Bind(int iSControl, uint16_t iPort, uint32_t iAddr, const std:
         }
     }
 
-    end:
+end:
     return;
 }
 
