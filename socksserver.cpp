@@ -252,8 +252,100 @@ end:
 void SocksServer::serveV5(int iSControl, const sockaddr_in &iCSIn)
 {
     char buf[1024]{0, };
-    buf[0] = 0x05;
-    size_t offset{1};
+    S5CHeader* cHeader = (S5CHeader*)buf;
+    S5SHeader* sHeader{nullptr};
+    size_t offset{0};
+    uint32_t ipv4Addr;
+    uint16_t port;
+    int recvLen;
+    int wrtLen;
+    int fd;
+    int trdControl;
+
+    while (true) {
+        fd = MARKTOOLS::SocketWaitRead(tv, {iSControl});
+        if (fd == 0) {
+            goto end;
+        }
+
+        if (fd < 0) {
+            perror("SocketWaitRead");
+            goto end;
+        }
+
+        recvLen = SockRead(iSControl, buf + offset, sizeof(buf) - offset);
+        if (-1 == recvLen) {
+            goto end;
+        }
+
+        if (0 == recvLen) {
+            goto end;
+        }
+
+        offset += recvLen;
+
+        if (offset >=  sizeof(S5CHeader) && offset == cHeader->getTotalLength()) {
+            break;
+        }
+    }
+
+    if (0x01 == cHeader->addrType) {
+        if (0x01 != cHeader->cmd) {
+            //todo
+            goto end;
+        }
+
+        trdControl = connTo(cHeader->getPort(), cHeader->getIPV4Addr());
+        if (-1 == trdControl) goto end;
+
+
+        ipv4Addr = cHeader->getIPV4Addr();
+        port = cHeader->getPort();
+
+        memset(buf, 0, sizeof(buf));
+        sHeader = (S5SHeader*)buf;
+        sHeader->status = 0x00;
+        sHeader->addrType = 0x01;
+        memccpy(sHeader->destAddr, &ipv4Addr, 1, sizeof(ipv4Addr));
+        memccpy(sHeader->destAddr + sizeof(ipv4Addr), &port, 1, sizeof(port));
+
+        SockWrite(iSControl, sHeader, sizeof(sHeader) + 3 + 2);
+
+        while (true) {
+            fd = MARKTOOLS::SocketWaitRead(tv, {iSControl, trdControl});
+            if (fd == 0) {
+                SockClose(trdControl);
+                goto end;
+            }
+
+            if (fd < 0) {
+                SockClose(trdControl);
+                perror("SocketWaitRead");
+                goto end;
+            }
+
+            recvLen = SockRead(fd, buf, sizeof(buf));
+            if (0 == recvLen) {
+                SockClose(trdControl);
+                goto end;
+            }
+
+            if (-1 == recvLen) {
+                SockClose(trdControl);
+                perror("SockRead");
+                goto end;
+            }
+
+            wrtLen = SockWrite(fd == iSControl ? trdControl : iSControl, buf, recvLen);
+            if (wrtLen != recvLen) {
+                SockClose(trdControl);
+                perror("SockWrite");
+                goto end;
+            }
+        }
+    } else {
+        //todo
+    }
 
     //todo, serve socks5
 end:
