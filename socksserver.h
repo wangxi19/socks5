@@ -24,14 +24,14 @@ public:
         uint8_t cmdCode{0x00};
         uint16_t portNum{0x0000};
         uint32_t ipaddr{0x000000};
-        const char* userId{nullptr};
+        char userId[1]{0, };
     };
 
     //socks4 server's header format
     struct S4SHeader {
     private:
         //must be null byte
-        uint8_t version{0x04};
+        uint8_t version{0x00};
     public:
         /**
             0x5A: request granted

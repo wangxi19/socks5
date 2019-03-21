@@ -414,8 +414,8 @@ end:
 void SocksServer::Connect(int iSControl, uint16_t iPort, uint32_t iAddr)
 {
     S4SHeader sHeader;
-    sHeader.dstPort = (uint16_t)random();
-    sHeader.dstIp = (uint32_t)random();
+    sHeader.dstPort = iPort;
+    memccpy(&sHeader.dstIp, &iAddr, 1, sizeof(iAddr));
     int trdControl;
     int fd;
     int rcvsz;
