@@ -100,7 +100,7 @@ public:
             if (0x01 != addrType) return 0;
 
             uint32_t ipv4addr;
-            memccpy(&ipv4addr, destAddr, 1, 4);
+            memcpy(&ipv4addr, destAddr, 4);
             return ipv4addr;
         }
 
@@ -123,11 +123,11 @@ public:
         inline uint16_t getPort() {
             uint16_t portNum{0};
             if (0x01 == addrType) {
-                memccpy(&portNum, destAddr + 4, 1, 2);
+                memcpy(&portNum, destAddr + 4, 2);
             } else if (0x03 == addrType) {
-                memccpy(&portNum, destAddr + 1 + size_t(destAddr[0]), 1, 2);
+                memcpy(&portNum, destAddr + 1 + size_t(destAddr[0]), 2);
             } else if (0x04 == addrType) {
-                memccpy(&portNum, destAddr + 16, 1, 2);
+                memcpy(&portNum, destAddr + 16, 2);
             }
 
             return portNum;
@@ -170,14 +170,30 @@ public:
             if (0x01 != addrType) return 0;
 
             uint32_t ipv4addr;
-            memccpy(&ipv4addr, destAddr, 1, 4);
+            memcpy(&ipv4addr, destAddr, 4);
             return ipv4addr;
+        }
+
+        inline void setIPV4Addr(const uint32_t& ipV4Addr) {
+            if (0x01 != addrType) return;
+
+            memcpy(destAddr, &ipV4Addr, 4);
+            return;
         }
 
         inline const char* getDomainName() {
             if (0x03 != addrType) return 0;
 
             return destAddr + 1;
+        }
+
+        inline void setDomainName(const char* domain) {
+            if (0x03 != addrType) return;
+
+            if (strlen(domain) > 255) return;
+
+            destAddr[0] = char(strlen(domain));
+            memcpy(destAddr + 1, domain, strlen(domain));
         }
 
         inline size_t getDomainLength() {
@@ -187,20 +203,40 @@ public:
         }
 
         inline const IPV6Addr* getIPV6Addr() {
+            if (0x04 != addrType) return nullptr;
+
             return (IPV6Addr*)&destAddr;
+        }
+
+        inline void setIPV6Addr(const IPV6Addr& ipV6Addr) {
+            if (0x04 != addrType) return;
+
+            memcpy(destAddr, &ipV6Addr, 16);
         }
 
         inline uint16_t getPort() {
             uint16_t portNum{0};
             if (0x01 == addrType) {
-                memccpy(&portNum, destAddr + 4, 1, 2);
+                memcpy(&portNum, destAddr + 4, 2);
             } else if (0x03 == addrType) {
-                memccpy(&portNum, destAddr + 1 + size_t(destAddr[0]), 1, 2);
+                memcpy(&portNum, destAddr + 1 + size_t(destAddr[0]), 2);
             } else if (0x04 == addrType) {
-                memccpy(&portNum, destAddr + 16, 1, 2);
+                memcpy(&portNum, destAddr + 16, 2);
             }
 
             return portNum;
+        }
+
+        inline void setPort(const uint16_t& port) {
+            if (0x01 == addrType) {
+                memcpy(destAddr + 4, &port, 2);
+            } else if (0x03 == addrType) {
+                memcpy(destAddr + 1 + (size_t)destAddr[0], &port, 2);
+            } else if (0x04 == addrType) {
+                memcpy(destAddr + 16, &port, 2);
+            }
+
+            return;
         }
     };
 

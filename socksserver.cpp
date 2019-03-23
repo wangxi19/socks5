@@ -251,12 +251,12 @@ end:
 
 void SocksServer::serveV5(int iSControl, const sockaddr_in &iCSIn)
 {
-    char buf[1024]{0, };
+    char buf[10240]{0, };
     S5CHeader* cHeader = (S5CHeader*)buf;
     S5SHeader* sHeader{nullptr};
+    sockaddr_in sIn;
+    socklen_t sInLen {sizeof(sIn)};
     size_t offset{0};
-    uint32_t ipv4Addr;
-    uint16_t port;
     int recvLen;
     int wrtLen;
     int fd;
@@ -296,20 +296,37 @@ void SocksServer::serveV5(int iSControl, const sockaddr_in &iCSIn)
         }
 
         trdControl = connTo(cHeader->getPort(), cHeader->getIPV4Addr());
-        if (-1 == trdControl) goto end;
-
-
-        ipv4Addr = cHeader->getIPV4Addr();
-        port = cHeader->getPort();
 
         memset(buf, 0, sizeof(buf));
         sHeader = (S5SHeader*)buf;
-        sHeader->status = 0x00;
+        sHeader->version = 0x05;
         sHeader->addrType = 0x01;
-        memccpy(sHeader->destAddr, &ipv4Addr, 1, sizeof(ipv4Addr));
-        memccpy(sHeader->destAddr + sizeof(ipv4Addr), &port, 1, sizeof(port));
 
-        SockWrite(iSControl, sHeader, sizeof(sHeader) + 3 + 2);
+        if (-1 == trdControl) {
+            sHeader->status = 0x01;
+            sHeader->setIPV4Addr(uint32_t{0x00});
+            sHeader->setPort(uint16_t{0x00});
+
+            SockWrite(iSControl, sHeader, sHeader->getTotalLength());
+            goto end;
+        }
+
+        if (0 != getsockname(trdControl, (sockaddr*)&sIn, &sInLen)) {
+            SockClose(trdControl);
+            sHeader->status = 0x01;
+            sHeader->setIPV4Addr(uint32_t{0x00});
+            sHeader->setPort(uint16_t{0x00});
+
+            SockWrite(iSControl, sHeader, sHeader->getTotalLength());
+            goto end;
+        }
+        sHeader->status = 0x00;
+        //let the socks5 client to convert ipv4 0.0.0.0 to the appropriate address which is used to connect to server,
+        //to avoid some error condition that socks server is inside of a NAT network
+        sHeader->setIPV4Addr(uint32_t{0x00});
+        sHeader->setPort(sIn.sin_port);
+
+        SockWrite(iSControl, sHeader, sHeader->getTotalLength());
 
         while (true) {
             fd = MARKTOOLS::SocketWaitRead(tv, {iSControl, trdControl});
