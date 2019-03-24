@@ -6,8 +6,13 @@
 #include <mutex>
 #include <string.h>
 
-typedef std::variant<uint16_t, uint32_t, std::string> Variant;
-
+struct IPV6Addr {
+    uint32_t field1{0, };
+    uint32_t field2{0, };
+    uint32_t field3{0, };
+    uint32_t field4{0, };
+};
+typedef std::variant<uint16_t, uint32_t, std::string, IPV6Addr> Variant;
 struct sockaddr_in;
 
 class SocksServer
@@ -59,13 +64,6 @@ public:
     char authMethodsLst[1] {
         0x00
         //todo, add other auth methods
-    };
-
-    struct IPV6Addr {
-        uint32_t field1{0, };
-        uint32_t field2{0, };
-        uint32_t field3{0, };
-        uint32_t field4{0, };
     };
 
     struct S5CHeader
@@ -250,10 +248,16 @@ private:
     void serveV5(int iSControl, const sockaddr_in &iCSIn);
     void greetingV5(int iSControl, const sockaddr_in &iCSIn);
     inline int connTo(uint16_t iPort, uint32_t iAddr);
+    inline int connTo(uint16_t iPort, const IPV6Addr& iAddr);
     inline int bindOn(uint16_t iPort = 0, uint32_t iAddr = 0);
+    inline int bindOn(uint16_t iPort, const IPV6Addr& iAddr);
 
-    void Connect(int iSControl, uint16_t iPort, uint32_t iAddr);
-    void Bind(int iSControl, uint16_t iPort, uint32_t iAddr, const std::string& iUsrId, const sockaddr_in &iCSIn);
+    void ConnectV4(int iSControl, uint16_t iPort, uint32_t iAddr);
+    void BindV4(int iSControl, uint16_t iPort, uint32_t iAddr, const std::string& iUsrId, const sockaddr_in &iCSIn);
+
+    void ConnectV5(int iSControl, S5CHeader* cHeader);
+    void BindV5(int iSControl, const S5CHeader* s5CHeader, const sockaddr_in &iCSIn);
+
 
     void addSession(const std::string& iHstDotPort, const std::map<std::string, Variant>& iV);
     void removeSession(const std::string& iHstDotPort);

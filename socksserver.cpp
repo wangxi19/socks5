@@ -229,7 +229,7 @@ void SocksServer::serveV4(int iSControl, const sockaddr_in &iCSIn)
 #ifdef _WIN32
     //todo, convert inet_ntoa to windows compatibility
 #else
-    addSession(std::string(inet_ntoa(iCSIn.sin_addr)) + ":" + std::to_string(iCSIn.sin_port),
+    addSession(std::string(inet_ntoa(iCSIn.sin_addr)) + ":" + std::to_string(iCSIn.sin_port) + ":" + "V4",
                std::map<std::string, Variant>{
                    {std::string("DSTPORT"), Variant(cHeader->portNum)},
                    {std::string("DSTIP"), Variant(cHeader->ipaddr)},
@@ -239,28 +239,23 @@ void SocksServer::serveV4(int iSControl, const sockaddr_in &iCSIn)
 
     //request to connect
     if (0x01 == cHeader->cmdCode) {
-        Connect(iSControl, cHeader->portNum, cHeader->ipaddr);
+        ConnectV4(iSControl, cHeader->portNum, cHeader->ipaddr);
     } else if (0x02 == cHeader->cmdCode) {
-        Bind(iSControl, cHeader->portNum, cHeader->ipaddr, std::string(cHeader->userId), iCSIn);
+        BindV4(iSControl, cHeader->portNum, cHeader->ipaddr, std::string(cHeader->userId), iCSIn);
     }
 
 end:
     SockClose(iSControl);
-    removeSession(std::string(inet_ntoa(iCSIn.sin_addr)) + ":" + std::to_string(iCSIn.sin_port));
+    removeSession(std::string(inet_ntoa(iCSIn.sin_addr)) + ":" + std::to_string(iCSIn.sin_port) + ":" + "V4");
 }
 
 void SocksServer::serveV5(int iSControl, const sockaddr_in &iCSIn)
 {
-    char buf[10240]{0, };
+    char buf[1024]{0, };
     S5CHeader* cHeader = (S5CHeader*)buf;
-    S5SHeader* sHeader{nullptr};
-    sockaddr_in sIn;
-    socklen_t sInLen {sizeof(sIn)};
     size_t offset{0};
     int recvLen;
-    int wrtLen;
     int fd;
-    int trdControl;
 
     while (true) {
         fd = MARKTOOLS::SocketWaitRead(tv, {iSControl});
@@ -289,76 +284,20 @@ void SocksServer::serveV5(int iSControl, const sockaddr_in &iCSIn)
         }
     }
 
-    if (0x01 == cHeader->addrType) {
-        if (0x01 != cHeader->cmd) {
-            //todo
-            goto end;
-        }
+    if (0x01 == cHeader->addrType || 0x03 == cHeader->addrType || 0x04 == cHeader->addrType) {
+        //connect
+        if (0x01 == cHeader->cmd) {
+#ifdef _WIN32
+            //todo, convert inet_ntoa to windows compatibility
+#else
+            addSession(std::string(inet_ntoa(iCSIn.sin_addr)) + ":" + std::to_string(iCSIn.sin_port) + ":" + "V5",
+                       std::map<std::string, Variant>{
+                           {std::string("DSTPORT"), Variant(cHeader->getPort())},
+                           {std::string("DSTIP"), Variant(cHeader->getIPV4Addr())}
+                       });
+#endif
 
-        trdControl = connTo(cHeader->getPort(), cHeader->getIPV4Addr());
-
-        memset(buf, 0, sizeof(buf));
-        sHeader = (S5SHeader*)buf;
-        sHeader->version = 0x05;
-        sHeader->addrType = 0x01;
-
-        if (-1 == trdControl) {
-            sHeader->status = 0x01;
-            sHeader->setIPV4Addr(uint32_t{0x00});
-            sHeader->setPort(uint16_t{0x00});
-
-            SockWrite(iSControl, sHeader, sHeader->getTotalLength());
-            goto end;
-        }
-
-        if (0 != getsockname(trdControl, (sockaddr*)&sIn, &sInLen)) {
-            SockClose(trdControl);
-            sHeader->status = 0x01;
-            sHeader->setIPV4Addr(uint32_t{0x00});
-            sHeader->setPort(uint16_t{0x00});
-
-            SockWrite(iSControl, sHeader, sHeader->getTotalLength());
-            goto end;
-        }
-        sHeader->status = 0x00;
-        //let the socks5 client to convert ipv4 0.0.0.0 to the appropriate address which is used to connect to server,
-        //to avoid some error condition that socks server is inside of a NAT network
-        sHeader->setIPV4Addr(uint32_t{0x00});
-        sHeader->setPort(sIn.sin_port);
-
-        SockWrite(iSControl, sHeader, sHeader->getTotalLength());
-
-        while (true) {
-            fd = MARKTOOLS::SocketWaitRead(tv, {iSControl, trdControl});
-            if (fd == 0) {
-                SockClose(trdControl);
-                goto end;
-            }
-
-            if (fd < 0) {
-                SockClose(trdControl);
-                perror("SocketWaitRead");
-                goto end;
-            }
-
-            recvLen = SockRead(fd, buf, sizeof(buf));
-            if (0 == recvLen) {
-                SockClose(trdControl);
-                goto end;
-            }
-
-            if (-1 == recvLen) {
-                SockClose(trdControl);
-                perror("SockRead");
-                goto end;
-            }
-
-            wrtLen = SockWrite(fd == iSControl ? trdControl : iSControl, buf, recvLen);
-            if (wrtLen != recvLen) {
-                SockClose(trdControl);
-                perror("SockWrite");
-                goto end;
-            }
+            ConnectV5(iSControl, cHeader);
         }
     } else {
         //todo
@@ -367,6 +306,7 @@ void SocksServer::serveV5(int iSControl, const sockaddr_in &iCSIn)
     //todo, serve socks5
 end:
     SockClose(iSControl);
+    removeSession(std::string(inet_ntoa(iCSIn.sin_addr)) + ":" + std::to_string(iCSIn.sin_port) + ":" + "V5");
 }
 
 void SocksServer::greetingV5(int iSControl, const sockaddr_in &iCSIn)
@@ -483,6 +423,43 @@ end:
     return trdControl;
 }
 
+int SocksServer::connTo(uint16_t iPort, const IPV6Addr &iAddr)
+{
+    int trdControl;
+    sockaddr_in6 trdIn;
+    int on = 1;
+
+    memset(&trdIn, 0, sizeof(sockaddr_in6));
+
+    trdIn.sin6_family = AF_INET6;
+    trdIn.sin6_port = iPort;
+    memccpy(&trdIn.sin6_addr, &iAddr, 1, sizeof(iAddr));
+
+    trdControl = socket(PF_INET6, SOCK_STREAM, IPPROTO_TCP);
+    if (trdControl == -1) {
+        perror("socket");
+        goto end;
+    }
+
+
+    if (setsockopt(trdControl, SOL_SOCKET, SO_REUSEADDR, SETSOCKOPTOPTVALTYPE &on, sizeof(on)) == -1) {
+        perror("setsockopt SO_REUSEADDR");
+        SockClose(trdControl);
+        trdControl = -1;
+        goto end;
+    }
+
+    if (0 != connect(trdControl, (sockaddr*)&trdIn, sizeof(sockaddr_in6))) {
+        perror("connect");
+        SockClose(trdControl);
+        trdControl = -1;
+        goto end;
+    }
+
+end:
+    return trdControl;
+}
+
 int SocksServer::bindOn(uint16_t iPort, uint32_t iAddr)
 {
     int trdControl;
@@ -509,7 +486,7 @@ int SocksServer::bindOn(uint16_t iPort, uint32_t iAddr)
         goto end;
     }
 
-    if (0 != bind(trdControl, (sockaddr*)&trdIn, sizeof(sockaddr))) {
+    if (0 != bind(trdControl, (sockaddr*)&trdIn, sizeof(sockaddr_in))) {
         perror("bind");
         SockClose(trdControl);
         trdControl = -1;
@@ -520,7 +497,43 @@ end:
     return trdControl;
 }
 
-void SocksServer::Connect(int iSControl, uint16_t iPort, uint32_t iAddr)
+int SocksServer::bindOn(uint16_t iPort, const IPV6Addr &iAddr)
+{
+    int trdControl;
+    sockaddr_in6 trdIn;
+    int on = 1;
+
+    memset(&trdIn, 0, sizeof(sockaddr_in6));
+
+    trdIn.sin6_family = AF_INET6;
+    trdIn.sin6_port = iPort;
+    memccpy(&trdIn.sin6_addr, &iAddr, 1, sizeof(iAddr));
+
+    trdControl = socket(PF_INET6, SOCK_STREAM, IPPROTO_TCP);
+    if (trdControl == -1) {
+        perror("socket");
+        goto end;
+    }
+
+    if (setsockopt(trdControl, SOL_SOCKET, SO_REUSEADDR, SETSOCKOPTOPTVALTYPE &on, sizeof(on)) == -1) {
+        perror("setsockopt SO_REUSEADDR");
+        SockClose(trdControl);
+        trdControl = -1;
+        goto end;
+    }
+
+    if (0 != bind(trdControl, (sockaddr*)&trdIn, sizeof(sockaddr_in6))) {
+        perror("bind");
+        SockClose(trdControl);
+        trdControl = -1;
+        goto end;
+    }
+
+end:
+    return trdControl;
+}
+
+void SocksServer::ConnectV4(int iSControl, uint16_t iPort, uint32_t iAddr)
 {
     S4SHeader sHeader;
     sHeader.dstPort = iPort;
@@ -582,7 +595,7 @@ end:
     return;
 }
 
-void SocksServer::Bind(int iSControl, uint16_t iPort, uint32_t iAddr, const std::string &iUsrId, const sockaddr_in &iCSIn)
+void SocksServer::BindV4(int iSControl, uint16_t iPort, uint32_t iAddr, const std::string &iUsrId, const sockaddr_in &iCSIn)
 {
     S4SHeader sHeader;
     sockaddr_in sIn;
@@ -597,7 +610,7 @@ void SocksServer::Bind(int iSControl, uint16_t iPort, uint32_t iAddr, const std:
     int wrtsz;
     bool flag{false};
 
-    auto sessionVal = getSession(std::string(inet_ntoa(iCSIn.sin_addr)) + ":" + std::to_string(iCSIn.sin_port));
+    auto sessionVal = getSession(std::string(inet_ntoa(iCSIn.sin_addr)) + ":" + std::to_string(iCSIn.sin_port) + ":" + "V4");
 
     if (sessionVal.empty() ||
             iPort != std::get<uint16_t>(sessionVal["DSTPORT"]) ||
@@ -699,6 +712,166 @@ void SocksServer::Bind(int iSControl, uint16_t iPort, uint32_t iAddr, const std:
 
 end:
     return;
+}
+
+void SocksServer::ConnectV5(int iSControl, S5CHeader *cHeader)
+{
+    int trdControl {-1};
+    sockaddr_in sIn;
+    sockaddr_in6 sIn6;
+    socklen_t sInLen;
+
+    int fd;
+    int recvLen;
+    int wrtLen;
+    char buf[1024]{0, };
+    S5SHeader* sHeader = (S5SHeader*)buf;
+
+    if (0x01 == cHeader->addrType) {
+        trdControl = connTo(cHeader->getPort(), cHeader->getIPV4Addr());
+    } else if (0x03 == cHeader->addrType) {
+        memcpy(buf, cHeader->getDomainName(), cHeader->getDomainLength());
+        hostent* htent = gethostbyname2(buf, AF_INET);
+        if (nullptr != htent) {
+            uint32_t ipv4addr;
+            int idx {0};
+            while (nullptr != htent->h_addr_list[idx]) {
+                memcpy(&ipv4addr, htent->h_addr_list[idx], 4);
+                trdControl = connTo(cHeader->getPort(), ipv4addr);
+                if (-1 != trdControl) break;
+                idx++;
+            }
+        }
+
+        if (-1 == trdControl) {
+            htent = gethostbyname2(buf, AF_INET6);
+            if (nullptr != htent) {
+                IPV6Addr ipv6addr;
+                int idx {0};
+                while (nullptr != htent->h_addr_list[idx]) {
+                    memcpy(&ipv6addr, htent->h_addr_list[idx], 16);
+                    trdControl = connTo(cHeader->getPort(), ipv6addr);
+                    if (-1 != trdControl) break;
+                    idx++;
+                }
+            }
+        }
+
+    } else if (0x04 == cHeader->addrType) {
+        IPV6Addr ipv6addr;
+        memcpy(&ipv6addr, cHeader->getIPV6Addr(), sizeof(IPV6Addr));
+        trdControl = connTo(cHeader->getPort(), ipv6addr);
+    } else {
+        trdControl = -1;
+    }
+
+    sHeader->version = 0x05;
+    sHeader->addrType = 0x01;
+
+    if (-1 == trdControl) {
+        sHeader->status = 0x01;
+        if (0x01 == cHeader->addrType) {
+            sHeader->setIPV4Addr(uint32_t{0x00});
+        } else if (0x03 == cHeader->addrType) {
+            sHeader->addrType = 0x03;
+            sHeader->setDomainName(" ");
+        } else if (0x04 == cHeader->addrType) {
+            sHeader->addrType = 0x04;
+            sHeader->setIPV6Addr(IPV6Addr{});
+        } else {
+            sHeader->setIPV4Addr(uint32_t{0x00});
+        }
+        sHeader->setPort(uint16_t{0x00});
+
+        SockWrite(iSControl, sHeader, sHeader->getTotalLength());
+        goto end;
+    }
+
+    if (0x01 == cHeader->addrType || 0x03 == cHeader->addrType) {
+        sHeader->addrType = cHeader->addrType;
+        sInLen = sizeof(sockaddr_in);
+        if (0 != getsockname(trdControl, (sockaddr*)&sIn, &sInLen)) {
+            SockClose(trdControl);
+            sHeader->status = 0x01;
+
+            if (0x01 == cHeader->addrType) sHeader->setIPV4Addr(uint32_t{0x00});
+            else sHeader->setDomainName("");
+
+            sHeader->setPort(uint16_t{0x00});
+
+            SockWrite(iSControl, sHeader, sHeader->getTotalLength());
+            goto end;
+        }
+
+        //let the socks5 client to convert ipv4 0.0.0.0 to the appropriate address which is used to connect to server,
+        //to avoid some error condition that socks server is inside of a NAT network
+        if (0x01 == cHeader->addrType) sHeader->setIPV4Addr(uint32_t{0x00});
+        else sHeader->setDomainName("");
+
+        sHeader->setPort(sIn.sin_port);
+    } else if (0x04 == cHeader->addrType){
+        sHeader->addrType = 0x04;
+        sInLen = sizeof(sockaddr_in6);
+        if (0 != getsockname(trdControl, (sockaddr*)&sIn6, &sInLen)) {
+            SockClose(trdControl);
+            sHeader->status = 0x01;
+            sHeader->setIPV6Addr(IPV6Addr{0x00});
+            sHeader->setPort(uint16_t{0x00});
+
+            SockWrite(iSControl, sHeader, sHeader->getTotalLength());
+            goto end;
+        }
+
+        IPV6Addr ipv6addr;
+        memcpy(&ipv6addr, &sIn6.sin6_addr, sizeof(IPV6Addr));
+        sHeader->setIPV6Addr(ipv6addr);
+        sHeader->setPort(sIn6.sin6_port);
+    }
+
+    sHeader->status = 0x00;
+
+    SockWrite(iSControl, sHeader, sHeader->getTotalLength());
+
+    while (true) {
+        fd = MARKTOOLS::SocketWaitRead(tv, {iSControl, trdControl});
+        if (fd == 0) {
+            SockClose(trdControl);
+            goto end;
+        }
+
+        if (fd < 0) {
+            SockClose(trdControl);
+            perror("SocketWaitRead");
+            goto end;
+        }
+
+        recvLen = SockRead(fd, buf, sizeof(buf));
+        if (0 == recvLen) {
+            SockClose(trdControl);
+            goto end;
+        }
+
+        if (-1 == recvLen) {
+            SockClose(trdControl);
+            perror("SockRead");
+            goto end;
+        }
+
+        wrtLen = SockWrite(fd == iSControl ? trdControl : iSControl, buf, recvLen);
+        if (wrtLen != recvLen) {
+            SockClose(trdControl);
+            perror("SockWrite");
+            goto end;
+        }
+    }
+
+end:
+    return;
+}
+
+void SocksServer::BindV5(int iSControl, const S5CHeader *s5CHeader, const sockaddr_in &iCSIn)
+{
+
 }
 
 void SocksServer::addSession(const std::string &iHstDotPort, const std::map<std::string, Variant> &iV)
