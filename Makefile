@@ -1,9 +1,9 @@
 CPPFLAGS = -std=c++17
 
 ifneq ($(dbg), 1)
-	CPPFLAGS := $(CPPFLAGS) -g -O0
-else
 	CPPFLAGS += -O3
+else
+	CPPFLAGS := $(CPPFLAGS) -g -O0
 endif
 
 CXX =g++
